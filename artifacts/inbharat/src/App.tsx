@@ -15,6 +15,7 @@ import {
 } from '@workspace/api-client-react';
 import type { HeritageSpot, HeritageSpotInput, Village } from '@workspace/api-client-react';
 import { Link, Route, Router as WouterRouter, Switch, useLocation } from 'wouter';
+import { OFFLINE_SUMMARY, isOfflinePreview, offlineSpots, offlineVillages } from '@/data/offline-heritage';
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false } } });
 const POINTS_KEY = 'inbharat:community-points';
@@ -123,6 +124,7 @@ function readableError(error: unknown) {
 }
 
 function SpotCard({ spot, onUpvote, voting }: { spot: HeritageSpot; onUpvote: (spot: HeritageSpot) => void; voting: boolean }) {
+  const preview = isOfflinePreview(spot.id);
   return <article className="spot-card" data-testid={`card-spot-${spot.id}`}>
     <div className="spot-image">{spot.imageUrl ? <img src={spot.imageUrl} alt={spot.title} loading="lazy" /> : <div className="spot-image-placeholder" aria-label="No photo available"><Landmark size={30} strokeWidth={1.2} /></div>}
       <span className="spot-category">{spot.category}</span>
@@ -131,7 +133,7 @@ function SpotCard({ spot, onUpvote, voting }: { spot: HeritageSpot; onUpvote: (s
       <h3>{spot.title}</h3>
       <div className="spot-location"><MapPin size={12} />{spot.villageName}, {spot.district}, {spot.state}</div>
       <p className="spot-desc">{spot.description || 'A place remembered and shared by people who know this village best.'}</p>
-      <div className="spot-footer"><small>Shared by the community</small><button className="upvote-button" onClick={() => onUpvote(spot)} disabled={voting} aria-label={`Upvote ${spot.title}`} data-testid={`button-upvote-${spot.id}`}><ThumbsUp size={13} />{voting ? 'Saving' : spot.upvotes}</button></div>
+      <div className="spot-footer"><small>{preview ? 'Offline sample' : 'Shared by the community'}</small><button className="upvote-button" onClick={() => onUpvote(spot)} disabled={voting} aria-label={`Upvote ${spot.title}`} data-testid={`button-upvote-${spot.id}`}><ThumbsUp size={13} />{voting ? 'Saving' : spot.upvotes}</button></div>
     </div>
   </article>;
 }
@@ -152,10 +154,11 @@ function CategoryBar({ selected, onSelect, includeAll = true }: { selected: stri
 }
 
 function SpotResults({ spots, loading, error, message, retry, onUpvote, isVoting }: { spots?: HeritageSpot[]; loading: boolean; error: boolean; message?: string; retry: () => void; onUpvote: (spot: HeritageSpot) => void; isVoting: boolean }) {
-  if (loading) return <LoadingCards />;
-  if (error) return <ErrorState retry={retry} message={message} />;
+  if (loading && spots === undefined) return <LoadingCards />;
+  if (error && spots === undefined) return <ErrorState retry={retry} message={message} />;
   if (!spots?.length) return <EmptyState title="No shared places here yet" description="Be the first to add a mandir, memory, or local story from this part of Bharat." action={<Link href="/add-spot" className="primary-button" data-testid="link-empty-add">Share a place <ArrowRight size={14} /></Link>} />;
-  return <div className="spot-grid">{spots.map((spot) => <SpotCard key={spot.id} spot={spot} onUpvote={onUpvote} voting={isVoting} />)}</div>;
+  const hasPreview = spots.some((spot) => isOfflinePreview(spot.id));
+  return <>{hasPreview && <p className="offline-preview-note" role="status">Offline preview · sample cards appear when the live heritage service is unavailable.</p>}<div className="spot-grid">{spots.map((spot) => <SpotCard key={spot.id} spot={spot} onUpvote={onUpvote} voting={isVoting} />)}</div></>;
 }
 
 function Home() {
@@ -165,10 +168,10 @@ function Home() {
   const [, setLocation] = useLocation();
   const qc = useQueryClient();
   const params = useMemo(() => ({ ...(selectedCategory ? { category: selectedCategory } : {}), ...(search.trim() ? { search: search.trim() } : {}), limit: 6 }), [selectedCategory, search]);
-  const spotsQuery = useListHeritageSpots(params, { query: { queryKey: getListHeritageSpotsQueryKey(params) } });
-  const summaryQuery = useGetHeritageSummary();
+  const spotsQuery = useListHeritageSpots(params, { query: { queryKey: getListHeritageSpotsQueryKey(params), initialData: offlineSpots(params), initialDataUpdatedAt: 0 } });
+  const summaryQuery = useGetHeritageSummary({ query: { initialData: OFFLINE_SUMMARY, initialDataUpdatedAt: 0 } });
   const villageParams = useMemo(() => ({ ...(search.trim() ? { search: search.trim() } : {}), limit: 6 }), [search]);
-  const villageQuery = useListVillages(villageParams, { query: { queryKey: getListVillagesQueryKey(villageParams), enabled: search.trim().length > 0 } });
+  const villageQuery = useListVillages(villageParams, { query: { queryKey: getListVillagesQueryKey(villageParams), enabled: search.trim().length > 0, initialData: offlineVillages(villageParams), initialDataUpdatedAt: 0 } });
   const upvote = useUpvoteHeritageSpot();
   const { notice, show } = useNotice();
   const submitSearch = (event: FormEvent) => { event.preventDefault(); setSuggestOpen(false); setLocation(`/villages?search=${encodeURIComponent(search.trim())}`); };
@@ -239,8 +242,8 @@ function Villages() {
   const [visitorPosition, setVisitorPosition] = useState<{ latitude: number; longitude: number } | null>(null);
   const villageParams = useMemo(() => ({ ...(search.trim() ? { search: search.trim() } : {}), limit: 30 }), [search]);
   const spotParams = useMemo(() => ({ ...(category ? { category } : {}), ...(search.trim() ? { search: search.trim() } : {}), limit: 30 }), [category, search]);
-  const villages = useListVillages(villageParams, { query: { queryKey: getListVillagesQueryKey(villageParams) } });
-  const spots = useListHeritageSpots(spotParams, { query: { queryKey: getListHeritageSpotsQueryKey(spotParams) } });
+  const villages = useListVillages(villageParams, { query: { queryKey: getListVillagesQueryKey(villageParams), initialData: offlineVillages(villageParams), initialDataUpdatedAt: 0 } });
+  const spots = useListHeritageSpots(spotParams, { query: { queryKey: getListHeritageSpotsQueryKey(spotParams), initialData: offlineSpots(spotParams), initialDataUpdatedAt: 0 } });
   const qc = useQueryClient();
   const upvote = useUpvoteHeritageSpot();
   const { notice, show } = useNotice();
@@ -272,7 +275,7 @@ function Villages() {
     <Eyebrow>Explore by village</Eyebrow><h1 className="page-title">Find your way into a story.</h1><p className="page-intro">Search across State, District, Tehsil, and Village. Every result is a place kept alive by local knowledge.</p>
     <div className="page-toolbar"><div className="search-box"><Search size={17} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="State, district, tehsil or village" aria-label="Search State, District, Tehsil or Village" data-testid="input-village-search" /></div><button className={`map-toggle ${showMap ? 'active' : ''}`} onClick={() => setShowMap(!showMap)} aria-pressed={showMap} data-testid="button-toggle-map"><Map size={15} />{showMap ? 'Hide map' : 'Map view'}</button><button className={`map-toggle ${nearby ? 'active' : ''}`} onClick={() => nearby ? setNearby(false) : findNearby()} aria-pressed={nearby} data-testid="button-nearby"><Navigation size={14} />{nearby ? 'Nearby on' : 'Near me'}</button></div>
     {!!geoMessage && <p className="nearby-note" role="status">{geoMessage}</p>}
-     {villages.isLoading ? <div className="skeleton" style={{ height: 94, margin: '15px 0' }} /> : villages.isError ? <ErrorState retry={() => void villages.refetch()} message={readableError(villages.error)} /> : villagesList.length > 0 && <div className="category-row" style={{ marginBottom: 5 }} aria-label="Matching villages">{villagesList.slice(0,8).map((village) => <button key={village.id} className="category-chip" onClick={() => setSearch(village.name)} data-testid={`village-chip-${village.id}`}><MapPin size={12} style={{ verticalAlign: '-2px', marginRight: 5 }} />{village.name} · {village.district}</button>)}</div>}
+      {villages.isLoading && villages.data === undefined ? <div className="skeleton" style={{ height: 94, margin: '15px 0' }} /> : villages.isError && villages.data === undefined ? <ErrorState retry={() => void villages.refetch()} message={readableError(villages.error)} /> : villagesList.length > 0 ? <div className="category-row" style={{ marginBottom: 5 }} aria-label="Matching villages">{villagesList.slice(0,8).map((village) => <button key={village.id} className="category-chip" onClick={() => setSearch(village.name)} data-testid={`village-chip-${village.id}`}><MapPin size={12} style={{ verticalAlign: '-2px', marginRight: 5 }} />{village.name} · {village.district}</button>)}</div> : <p className="offline-empty-hint">No matching village in the offline guide. Try a state, district, or village name.</p>}
     <CategoryBar selected={category} onSelect={setCategory} />
     {showMap && !spots.isLoading && !spots.isError && <MapPanel spots={filteredSpots || []} selected={selectedPin} onSelect={setSelectedPin} />}
     <div className="section-heading"><div><Eyebrow>{nearby ? 'Mapped nearby' : 'Community field notes'}</Eyebrow><h2>{search ? `Stories around “${search}”` : 'Places across Bharat'}</h2></div><span style={{ color: '#788696', fontSize: 11 }}>{spots.data?.length ?? 0} places</span></div>
@@ -324,7 +327,7 @@ function AddSpot() {
 
 function Community() {
   const params = useMemo(() => ({ limit: 50 }), []);
-  const spots = useListHeritageSpots(params, { query: { queryKey: getListHeritageSpotsQueryKey(params) } });
+  const spots = useListHeritageSpots(params, { query: { queryKey: getListHeritageSpotsQueryKey(params), initialData: offlineSpots(params), initialDataUpdatedAt: 0 } });
   const qc = useQueryClient();
   const upvote = useUpvoteHeritageSpot();
   const { notice, show } = useNotice();
@@ -335,7 +338,8 @@ function Community() {
   });
   return <Layout><div className="page">
     <Eyebrow>Knowledge travels together</Eyebrow><h1 className="page-title">The community knows the way.</h1><p className="page-intro">These places are rising because visitors and locals found them worth passing on. Add your own nod when a story stays with you.</p>
-     {spots.isLoading ? <div className="skeleton" style={{ height: 320, borderRadius: 15 }} /> : spots.isError ? <ErrorState retry={() => void spots.refetch()} message={readableError(spots.error)} /> : !topSpots.length ? <EmptyState title="The first story starts here" description="No community contributions have been added yet. Be the first to share a place from your village." action={<Link href="/add-spot" className="primary-button">Add a place <ArrowRight size={14} /></Link>} /> : <>
+      {spots.isLoading && spots.data === undefined ? <div className="skeleton" style={{ height: 320, borderRadius: 15 }} /> : spots.isError && spots.data === undefined ? <ErrorState retry={() => void spots.refetch()} message={readableError(spots.error)} /> : !topSpots.length ? <EmptyState title="The first story starts here" description="No community contributions have been added yet. Be the first to share a place from your village." action={<Link href="/add-spot" className="primary-button">Add a place <ArrowRight size={14} /></Link>} /> : <>
+       {topSpots.some((spot) => isOfflinePreview(spot.id)) && <p className="offline-preview-note" role="status">Offline preview · entries are illustrative until verified by local contributors.</p>}
       <div className="section-heading"><div><Eyebrow>Most appreciated</Eyebrow><h2>Local knowledge, lifted up</h2></div><span style={{ fontSize: 11, color: '#7a8794' }}>{topSpots.length} shared places</span></div>
       <div className="form-panel" style={{ padding: '8px 22px' }}>{topSpots.map((spot, i) => <div className="community-row" key={spot.id} data-testid={`community-row-${spot.id}`}><span className="rank">{String(i + 1).padStart(2, '0')}</span><span><strong>{spot.title}</strong><span>{spot.villageName}, {spot.district}, {spot.state} · {spot.category}</span></span><button className="upvote-button community-score" onClick={() => vote(spot)} disabled={upvote.isPending} aria-label={`Upvote ${spot.title}`} data-testid={`community-upvote-${spot.id}`}><ThumbsUp size={13} />{spot.upvotes}</button></div>)}</div>
       <div style={{ marginTop: 20, display: 'flex', justifyContent: 'flex-end' }}><Link href="/add-spot" className="primary-button" data-testid="link-add-community">Add a place to the map <Plus size={15} /></Link></div>
@@ -346,8 +350,8 @@ function Community() {
 
 function Profile() {
   const { points } = usePoints();
-  const summary = useGetHeritageSummary();
-  const spots = useListHeritageSpots({ limit: 6 }, { query: { queryKey: getListHeritageSpotsQueryKey({ limit: 6 }) } });
+  const summary = useGetHeritageSummary({ query: { initialData: OFFLINE_SUMMARY, initialDataUpdatedAt: 0 } });
+  const spots = useListHeritageSpots({ limit: 6 }, { query: { queryKey: getListHeritageSpotsQueryKey({ limit: 6 }), initialData: offlineSpots({ limit: 6 }), initialDataUpdatedAt: 0 } });
   const upvote = useUpvoteHeritageSpot();
   const qc = useQueryClient();
   const { notice, show } = useNotice();

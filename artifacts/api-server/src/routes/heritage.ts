@@ -1,4 +1,4 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request } from "express";
 import {
   CreateHeritageSpotBody,
   CreateHeritageSpotResponse,
@@ -13,10 +13,20 @@ import {
   type HeritageSummary,
   type Village,
 } from "@workspace/api-zod";
+import {
+  createLocalSpot,
+  getLocalSpots,
+  getLocalVillages,
+  rememberRemoteSpots,
+  rememberRemoteVillages,
+  upvoteLocalSpot,
+} from "./heritage-fallback";
 
 const router: IRouter = Router();
 const spotsTable = "local_spots";
 const villagesTable = "villages";
+const SUPABASE_RETRY_DELAY_MS = 30_000;
+let supabaseOfflineUntil = 0;
 
 type Row = Record<string, unknown>;
 
@@ -26,6 +36,29 @@ class SupabaseRequestError extends Error {
     readonly status = 502,
   ) {
     super(message);
+  }
+}
+
+async function withOfflineFallback<T>(
+  req: Request,
+  liveRequest: () => Promise<T>,
+  fallback: () => T,
+): Promise<T> {
+  if (Date.now() < supabaseOfflineUntil) return fallback();
+  try {
+    const result = await liveRequest();
+    supabaseOfflineUntil = 0;
+    return result;
+  } catch (error) {
+    const shouldLog = Date.now() >= supabaseOfflineUntil;
+    supabaseOfflineUntil = Date.now() + SUPABASE_RETRY_DELAY_MS;
+    if (shouldLog) {
+      req.log.warn(
+        { reason: error instanceof Error ? error.message : "unknown Supabase error" },
+        "Supabase unavailable; serving local heritage data",
+      );
+    }
+    return fallback();
   }
 }
 
@@ -47,6 +80,7 @@ async function supabaseRequest(path: string, init: RequestInit = {}): Promise<un
   try {
     response = await fetch(`${url}/rest/v1/${path}`, {
       ...init,
+      signal: init.signal ?? AbortSignal.timeout(1_500),
       headers: {
         apikey: key,
         Authorization: `Bearer ${key}`,
@@ -164,13 +198,13 @@ async function loadSpots(limit = 100): Promise<HeritageSpot[]> {
     limit: "1000",
   });
   const result = await supabaseRequest(`${spotsTable}?${query}`);
-  return asRows(result).map(mapSpot).slice(0, limit);
+  return rememberRemoteSpots(asRows(result).map(mapSpot)).slice(0, limit);
 }
 
 async function loadVillages(): Promise<Village[]> {
   const query = queryString({ select: "*", order: "name.asc", limit: "1000" });
   const result = await supabaseRequest(`${villagesTable}?${query}`);
-  return asRows(result).map(mapVillage);
+  return rememberRemoteVillages(asRows(result).map(mapVillage));
 }
 
 function villageKey(village: Pick<Village, "name" | "district" | "state">): string {
@@ -204,10 +238,10 @@ function combineVillages(villages: Village[], spots: HeritageSpot[]): Village[] 
 
 function sendFailure(res: Parameters<Parameters<IRouter["get"]>[1]>[1], error: unknown) {
   if (error instanceof SupabaseRequestError) {
-    res.status(error.status).json({ error: error.message });
+    res.status(error.status === 502 ? 503 : error.status).json({ error: error.message });
     return;
   }
-  res.status(502).json({ error: "The heritage data request could not be completed." });
+  res.status(500).json({ error: "The heritage data request could not be completed." });
 }
 
 router.get("/heritage/spots", async (req, res) => {
@@ -220,7 +254,20 @@ router.get("/heritage/spots", async (req, res) => {
     const { category, search, limit } = parsed.data;
     const terms = search?.trim().toLocaleLowerCase();
     const categoryFilter = category?.trim().toLocaleLowerCase();
-    const rows = await loadSpots(1000);
+    const rows = await withOfflineFallback(req, () => loadSpots(1000), getLocalSpots);
+    const searchableVillages = terms
+      ? await withOfflineFallback(req, loadVillages, getLocalVillages)
+      : [];
+    const matchingVillageKeys = new Set(
+      searchableVillages
+        .filter((village) =>
+          [village.name, village.district, village.state, village.tehsil ?? ""]
+            .join(" ")
+            .toLocaleLowerCase()
+            .includes(terms ?? ""),
+        )
+        .map(villageKey),
+    );
     const spots = rows
       .filter((spot) => !categoryFilter || spot.category.toLocaleLowerCase() === categoryFilter)
       .filter(
@@ -229,7 +276,8 @@ router.get("/heritage/spots", async (req, res) => {
           [spot.title, spot.villageName, spot.district, spot.state, spot.category]
             .join(" ")
             .toLocaleLowerCase()
-            .includes(terms),
+            .includes(terms) ||
+          matchingVillageKeys.has(villageKey(spot)),
       )
       .slice(0, limit ?? 24);
     res.json(ListHeritageSpotsResponse.parse(spots));
@@ -258,17 +306,24 @@ router.post("/heritage/spots", async (req, res) => {
       longitude: body.longitude ?? null,
       upvotes: 0,
     };
-    const result = await supabaseRequest(spotsTable, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Prefer: "return=representation",
+    const created = await withOfflineFallback(
+      req,
+      async () => {
+        const result = await supabaseRequest(spotsTable, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Prefer: "return=representation",
+          },
+          body: JSON.stringify(row),
+        });
+        const saved = asRows(result)[0];
+        if (!saved) throw new SupabaseRequestError("Supabase returned no saved spot.", 502);
+        return CreateHeritageSpotResponse.parse(mapSpot(saved));
       },
-      body: JSON.stringify(row),
-    });
-    const created = asRows(result)[0];
-    if (!created) throw new SupabaseRequestError("Supabase returned no saved spot.", 502);
-    res.status(201).json(CreateHeritageSpotResponse.parse(mapSpot(created)));
+      () => CreateHeritageSpotResponse.parse(createLocalSpot(body)),
+    );
+    res.status(201).json(created);
   } catch (error) {
     sendFailure(res, error);
   }
@@ -281,16 +336,25 @@ router.post("/heritage/spots/:spotId/upvote", async (req, res) => {
     return;
   }
   try {
-    const result = await supabaseRequest("rpc/increment_local_spot_upvotes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ p_spot_id: parsed.data.spotId }),
-    });
-    const updated = Array.isArray(result) ? asRows(result)[0] : result;
-    if (typeof updated !== "object" || updated === null || Array.isArray(updated)) {
-      throw new SupabaseRequestError("Supabase returned no updated spot.", 404);
+    const updated = await withOfflineFallback<HeritageSpot | null>(
+      req,
+      async () => {
+        const result = await supabaseRequest("rpc/increment_local_spot_upvotes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ p_spot_id: parsed.data.spotId }),
+        });
+        const row = Array.isArray(result) ? asRows(result)[0] : result;
+        if (typeof row !== "object" || row === null || Array.isArray(row)) return null;
+        return UpvoteHeritageSpotResponse.parse(mapSpot(row as Row));
+      },
+      () => upvoteLocalSpot(parsed.data.spotId),
+    );
+    if (!updated) {
+      res.status(404).json({ error: "This place is no longer available to upvote." });
+      return;
     }
-    res.json(UpvoteHeritageSpotResponse.parse(mapSpot(updated as Row)));
+    res.json(updated);
   } catch (error) {
     sendFailure(res, error);
   }
@@ -304,7 +368,10 @@ router.get("/villages", async (req, res) => {
   }
   try {
     const { search, limit } = parsed.data;
-    const [villages, spots] = await Promise.all([loadVillages(), loadSpots(1000)]);
+    const [villages, spots] = await Promise.all([
+      withOfflineFallback(req, loadVillages, getLocalVillages),
+      withOfflineFallback(req, () => loadSpots(1000), getLocalSpots),
+    ]);
     const terms = search?.trim().toLocaleLowerCase();
     const results = combineVillages(villages, spots)
       .filter(
@@ -322,9 +389,12 @@ router.get("/villages", async (req, res) => {
   }
 });
 
-router.get("/heritage/summary", async (_req, res) => {
+router.get("/heritage/summary", async (req, res) => {
   try {
-    const [spots, villages] = await Promise.all([loadSpots(1000), loadVillages()]);
+    const [spots, villages] = await Promise.all([
+      withOfflineFallback(req, () => loadSpots(1000), getLocalSpots),
+      withOfflineFallback(req, loadVillages, getLocalVillages),
+    ]);
     const summary: HeritageSummary = {
       spotCount: spots.length,
       villageCount: combineVillages(villages, spots).length,
