@@ -17,3 +17,4 @@
     "typescript": "~5.9.3"
   }
 }
+"@supabase/supabase-js": "^2.39.0",
