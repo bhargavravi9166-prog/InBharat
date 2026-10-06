@@ -392,4 +392,7 @@ function App() {
 
 export default App;
 import { supabase } from '../lib/supabaseClient';
+.from('Heritage and tourism palace')
+.select('*')
+.or('Name.ilike.%' + query + '%,State.ilike.%' + query + '%,City.ilike.%' + query + '%')
 
