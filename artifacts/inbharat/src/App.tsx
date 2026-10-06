@@ -391,3 +391,5 @@ function App() {
 }
 
 export default App;
+import { supabase } from '../lib/supabaseClient';
+
