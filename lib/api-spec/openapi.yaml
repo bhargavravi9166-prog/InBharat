@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: heritage
+    description: Indian villages, community spots, and heritage discovery
 paths:
   /healthz:
     get:
@@ -24,6 +26,112 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /heritage/spots:
+    get:
+      operationId: listHeritageSpots
+      tags: [heritage]
+      summary: List local heritage spots
+      parameters:
+        - name: category
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Matching heritage spots
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HeritageSpot"
+    post:
+      operationId: createHeritageSpot
+      tags: [heritage]
+      summary: Submit a local heritage spot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HeritageSpotInput"
+      responses:
+        "201":
+          description: Submitted heritage spot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HeritageSpot"
+  /heritage/spots/{spotId}/upvote:
+    post:
+      operationId: upvoteHeritageSpot
+      tags: [heritage]
+      summary: Upvote a local heritage spot
+      parameters:
+        - name: spotId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Updated heritage spot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HeritageSpot"
+  /villages:
+    get:
+      operationId: listVillages
+      tags: [heritage]
+      summary: Search villages
+      parameters:
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Matching villages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Village"
+  /heritage/summary:
+    get:
+      operationId: getHeritageSummary
+      tags: [heritage]
+      summary: Get discovery totals for the home screen
+      responses:
+        "200":
+          description: Current community totals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HeritageSummary"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +141,51 @@ components:
           type: string
       required:
         - status
+    HeritageSpot:
+      type: object
+      required: [id, title, villageName, district, state, category, upvotes]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        villageName: { type: string }
+        district: { type: string }
+        state: { type: string }
+        category: { type: string }
+        description: { type: ["string", "null"] }
+        imageUrl: { type: ["string", "null"] }
+        upvotes: { type: integer }
+        latitude: { type: ["number", "null"] }
+        longitude: { type: ["number", "null"] }
+    HeritageSpotInput:
+      type: object
+      required: [title, villageName, district, state, category]
+      properties:
+        title: { type: string, minLength: 2, maxLength: 120 }
+        villageName: { type: string, minLength: 2, maxLength: 100 }
+        district: { type: string, minLength: 2, maxLength: 100 }
+        state: { type: string, minLength: 2, maxLength: 100 }
+        category: { type: string, minLength: 2, maxLength: 80 }
+        description: { type: string, maxLength: 1000 }
+        imageUrl: { type: string, format: uri }
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+    Village:
+      type: object
+      required: [id, name, district, state, spotCount]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        district: { type: string }
+        state: { type: string }
+        tehsil: { type: ["string", "null"] }
+        description: { type: ["string", "null"] }
+        imageUrl: { type: ["string", "null"] }
+        spotCount: { type: integer }
+    HeritageSummary:
+      type: object
+      required: [spotCount, villageCount, totalUpvotes]
+      properties:
+        spotCount: { type: integer }
+        villageCount: { type: integer }
+        totalUpvotes: { type: integer }
 

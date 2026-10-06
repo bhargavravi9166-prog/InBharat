@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "INBHARAT Heritage Explorer"
+description = "Discover Indian village heritage, local places, temples, stories, and regional culture through a community-powered map and discovery app."
+version = "1.0.0"
+id = "artifacts/inbharat"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25136
+
+[services.development]
+run = "pnpm --filter @workspace/inbharat run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/inbharat", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/inbharat/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25136"
+BASE_PATH = "/"

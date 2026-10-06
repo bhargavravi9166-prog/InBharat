@@ -1,6 +1,6 @@
-# [Project name]
+# INBHARAT
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+INBHARAT helps people discover Indian village heritage, local spots, and rural history through community-shared places and stories.
 
 ## Run & Operate
 
@@ -22,15 +22,23 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/inbharat/src/App.tsx` — responsive app routes, discovery interactions, and generated API-hook usage
+- `artifacts/inbharat/src/index.css` — INBHARAT visual theme and responsive styling
+- `artifacts/inbharat/supabase/schema.sql` — Supabase tables, public read/submit policies, and atomic upvote function
+- `artifacts/api-server/src/routes/heritage.ts` — API endpoints that normalize and validate Supabase records
+- `lib/api-spec/openapi.yaml` — API contract source of truth
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Supabase is the data source; the app API uses the public publishable key and relies on Supabase RLS for access control.
+- Run `artifacts/inbharat/supabase/schema.sql` in the configured Supabase SQL Editor before using spot and village features.
+- Guest community points are saved in the current browser until a user-account flow is added.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Search and filter village heritage by state, district, tehsil, village, and category.
+- Browse community-submitted spots, open a coordinate-based community map, and sort nearby entries using browser location.
+- Submit spots, upvote shared locations, and browse community and profile views.
 
 ## User preferences
 
@@ -38,7 +46,7 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- The Supabase project URL must resolve, and the public tables need the RLS policies in `artifacts/inbharat/supabase/schema.sql`.
 
 ## Pointers
 
