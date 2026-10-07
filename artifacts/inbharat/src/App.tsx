@@ -395,4 +395,19 @@ import { supabase } from '../lib/supabaseClient';
 .from('Heritage and tourism palace')
 .select('*')
 .or('Name.ilike.%' + query + '%,State.ilike.%' + query + '%,City.ilike.%' + query + '%')
+const handleSearch = async (searchTerm: string) => {
+  if (!searchTerm.trim()) return;
+
+  const { data, error } = await supabase
+    .from('Heritage and tourism palace')
+    .select('*')
+    .or(`Name.ilike.%${searchTerm}%,State.ilike.%${searchTerm}%,City.ilike.%${searchTerm}%`);
+
+  if (error) {
+    console.error("Search Error:", error);
+    return;
+  }
+
+  setPlaces(data); // Ya jo bhi aapke state variable ka naam hai
+};
 
